@@ -20,7 +20,7 @@ public interface FileSender<T extends Channel> {
   }
 
   /**
-   * Same as {@link #sendFile(T, String, long, long)} using length @code{Long.MAX_VALUE} which means until the end of the
+   * Same as {@link #sendFile(T, String, long, long, boolean)} using length @code{Long.MAX_VALUE} which means until the end of the
    * file.
    *
    * @param channel the file channel to the file to serve
@@ -29,7 +29,7 @@ public interface FileSender<T extends Channel> {
    * @return a future completed with the body result
    */
   default Future<Void> sendFile(T channel, String extension, long offset) {
-    return sendFile(channel, extension, offset, Long.MAX_VALUE);
+    return sendFile(channel, extension, offset, Long.MAX_VALUE, true);
   }
 
   /**
@@ -46,6 +46,6 @@ public interface FileSender<T extends Channel> {
    * @return a future completed with the body result
    */
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<Void> sendFile(T channel, String extension, long offset, long length);
+  Future<Void> sendFile(T channel, String extension, long offset, long length, boolean commit);
 
 }

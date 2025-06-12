@@ -435,7 +435,8 @@ public class Http1xServerResponse implements HttpServerResponse, HttpResponse, F
         }
       },
       () -> raf,
-      conn::sendFile);
+      conn::sendFile,
+      true);
     if (result.failed()) {
       try {
         raf.close();
@@ -451,7 +452,7 @@ public class Http1xServerResponse implements HttpServerResponse, HttpResponse, F
   }
 
   @Override
-  public Future<Void> sendFile(FileChannel channel, String extension, long offset, long length) {
+  public Future<Void> sendFile(FileChannel channel, String extension, long offset, long length, boolean commit) {
     return sendFileInternal(extension, offset,
       length,
       MimeMapping::mimeTypeForExtension,
@@ -463,10 +464,10 @@ public class Http1xServerResponse implements HttpServerResponse, HttpResponse, F
         }
       },
       () -> channel,
-      conn::sendFile);
+      conn::sendFile, commit);
   }
 
-  private <F> Future<Void> sendFileInternal(String nameOrExtension, long offset, long length, Function<String, String> contentTypeMapper, Function<F, Long> lengthSupplier, Supplier<F> fileSupplier, Sender<F> sendFileSupplier) {
+  private <F> Future<Void> sendFileInternal(String nameOrExtension, long offset, long length, Function<String, String> contentTypeMapper, Function<F, Long> lengthSupplier, Supplier<F> fileSupplier, Sender<F> sendFileSupplier, boolean commit) {
     ContextInternal ctx = vertx.getOrCreateContext();
     if (offset < 0) {
       return ctx.failedFuture("offset : " + offset + " (expected: >= 0)");
@@ -494,23 +495,26 @@ public class Http1xServerResponse implements HttpServerResponse, HttpResponse, F
         return ctx.failedFuture("offset : " + offset + " is larger than the requested file length : " + size);
       }
 
-      if (!headers.contains(HttpHeaders.CONTENT_TYPE)) {
-        String contentType = contentTypeMapper.apply(nameOrExtension);
-        if (contentType != null) {
-          headers.set(HttpHeaders.CONTENT_TYPE, contentType);
+        if (!headers.contains(HttpHeaders.CONTENT_TYPE)) {
+          String contentType = contentTypeMapper.apply(nameOrExtension);
+          if (contentType != null) {
+            headers.set(HttpHeaders.CONTENT_TYPE, contentType);
+          }
         }
-      }
-      prepareHeaders(actualLength);
-      bytesWritten = actualLength;
-      written = true;
 
-      conn.write(new AssembledHttpResponse(head, version, status, headers), null);
+        if (commit) {
+          prepareHeaders(actualLength);
+          bytesWritten = actualLength;
+          written = true;
+        }
+
+        conn.write(new AssembledHttpResponse(head, version, status, headers), null);
 
       ChannelFuture channelFut = sendFileSupplier.send(fileSupplier.get(), actualOffset, actualLength);
       channelFut.addListener(future -> {
 
         // write an empty last content to let the http encoder know the response is complete
-        if (future.isSuccess()) {
+        if (future.isSuccess() && commit) {
           conn.write(new AssembledLastHttpContent(Unpooled.buffer(0), DefaultHttpHeadersFactory.trailersFactory().newHeaders()), null);
         }
 
@@ -811,12 +815,12 @@ public class Http1xServerResponse implements HttpServerResponse, HttpResponse, F
       return (Set) cookies().removeOrInvalidateAll(name, invalidate);
     }
   }
-  
+
   @FunctionalInterface
-  private static interface Sender<F> {
+  private interface Sender<F> {
 
     ChannelFuture send(F u, Long v, Long w);
 
   }
-  
+
 }
