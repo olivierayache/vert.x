@@ -35,10 +35,10 @@ import io.vertx.core.net.HostAndPort;
 import io.vertx.core.net.NetSocket;
 import io.vertx.core.spi.observability.HttpResponse;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.core.streams.WriteStream;
 
 import java.io.IOException;
 import java.nio.channels.AsynchronousFileChannel;
-import java.nio.channels.FileChannel;
 import java.util.Map.Entry;
 import java.util.Set;
 
@@ -571,7 +571,7 @@ public class Http2ServerResponse implements HttpServerResponse, HttpResponse, Fi
   }
 
   @Override
-  public Future<Void> sendFile(AsynchronousFileChannel channel, String extension, long offset, long length) {
+  public Future<Void> sendFile(AsynchronousFileChannel channel, String extension, long offset, long length, boolean commit) {
     if (offset < 0) {
       return stream.context.failedFuture("offset : " + offset + " (expected: >= 0)");
     }
@@ -595,7 +595,7 @@ public class Http2ServerResponse implements HttpServerResponse, HttpResponse, Fi
     file.setReadPos(offset);
     file.setReadLength(contentLength);
     // fail early before status code/headers are written to the response
-    if (headers.get(HttpHeaderNames.CONTENT_LENGTH) == null) {
+    if (headers.get(HttpHeaderNames.CONTENT_LENGTH) == null && !isChunked()) {
       putHeader(HttpHeaderNames.CONTENT_LENGTH, HttpUtils.positiveLongToString(contentLength));
     }
     if (headers.get(HttpHeaderNames.CONTENT_TYPE) == null) {
@@ -604,8 +604,39 @@ public class Http2ServerResponse implements HttpServerResponse, HttpResponse, Fi
         putHeader(HttpHeaderNames.CONTENT_TYPE, contentType);
       }
     }
-    checkSendHeaders(false);
-    return file.pipeTo(this);
+    if (commit)
+      checkSendHeaders(false);
+    return file.pipeTo(new WriteStream<Buffer>() {
+      @Override
+      public WriteStream<Buffer> exceptionHandler(@Nullable Handler<Throwable> handler) {
+        return Http2ServerResponse.this.exceptionHandler(handler);
+      }
+
+      @Override
+      public Future<Void> write(Buffer data) {
+        return Http2ServerResponse.this.write(data);
+      }
+
+      @Override
+      public Future<Void> end() {
+        return Http2ServerResponse.this.write(null, commit);
+      }
+
+      @Override
+      public WriteStream<Buffer> setWriteQueueMaxSize(int maxSize) {
+        return Http2ServerResponse.this.setWriteQueueMaxSize(maxSize);
+      }
+
+      @Override
+      public boolean writeQueueFull() {
+        return Http2ServerResponse.this.writeQueueFull();
+      }
+
+      @Override
+      public WriteStream<Buffer> drainHandler(@Nullable Handler<Void> handler) {
+        return Http2ServerResponse.this.drainHandler(handler);
+      }
+    });
   }
 
   @Override
